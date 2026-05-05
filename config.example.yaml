@@ -1,0 +1,41 @@
+# logfence example configuration
+# Copy to config.yaml and adjust to your environment.
+
+# Address the log ingestion server listens on (TCP, syslog-like framing).
+listen_addr: ":5170"
+
+# Sinks define where matched log entries are forwarded.
+sinks:
+  - name: console
+    type: stdout
+
+  - name: error-file
+    type: file
+    target: /var/log/logfence/errors.log
+    opts:
+      max_size_mb: "100"
+      max_backups: "3"
+
+  - name: audit-webhook
+    type: http
+    target: https://ingest.example.com/logs
+    opts:
+      timeout_s: "5"
+      auth_header: "Bearer changeme"
+
+# Routes are evaluated top-to-bottom; first match wins.
+routes:
+  - name: debug-discard
+    levels: [debug, trace]
+    sink: console   # change to a null/discard sink to suppress
+
+  - name: error-capture
+    levels: [error, fatal, critical]
+    sink: error-file
+
+  - name: audit-events
+    sources: ["auth-service", "billing-service"]
+    sink: audit-webhook
+
+  - name: catch-all
+    sink: console
