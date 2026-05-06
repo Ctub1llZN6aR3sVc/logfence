@@ -75,6 +75,9 @@ func TestDispatch_SinkWriteError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+	if !errors.Is(err, s.wErr) {
+		t.Fatalf("expected underlying error %q, got %q", s.wErr, err)
+	}
 }
 
 func TestClose_CallsSinkClose(t *testing.T) {
@@ -88,6 +91,28 @@ func TestClose_CallsSinkClose(t *testing.T) {
 	}
 	if !s.closed {
 		t.Fatal("expected sink to be closed")
+	}
+}
+
+// TestDispatch_MultipleRoutes verifies that an entry matching more than one
+// route is delivered to all matching sinks.
+func TestDispatch_MultipleRoutes(t *testing.T) {
+	s1 := &captureSink{}
+	s2 := &captureSink{}
+	r := router.New([]router.Route{
+		{Name: "warnings-and-above", Filter: parseChain(t, "warn"), Sink: s1},
+		{Name: "errors-only", Filter: parseChain(t, "error"), Sink: s2},
+	})
+
+	entry := map[string]interface{}{"level": "error", "msg": "critical failure"}
+	if err := r.Dispatch(entry); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s1.entries) != 1 {
+		t.Fatalf("s1: expected 1 entry, got %d", len(s1.entries))
+	}
+	if len(s2.entries) != 1 {
+		t.Fatalf("s2: expected 1 entry, got %d", len(s2.entries))
 	}
 }
 
