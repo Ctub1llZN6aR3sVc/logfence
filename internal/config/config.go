@@ -1,26 +1,33 @@
+// Package config loads and validates logfence configuration from a YAML file.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Route defines a log routing rule: match logs by level/source and forward to a sink.
-type Route struct {
-	Name    string   `yaml:"name"`
-	Levels  []string `yaml:"levels"`
-	Sources []string `yaml:"sources"`
-	Sink    string   `yaml:"sink"`
+// RateLimit holds per-route rate limiting parameters.
+type RateLimit struct {
+	Rate  int `yaml:"rate"`  // tokens per second
+	Burst int `yaml:"burst"` // maximum burst size
 }
 
-// Sink defines an output destination for log entries.
+// Route maps a filter chain to a sink, with optional rate limiting.
+type Route struct {
+	Name      string    `yaml:"name"`
+	Filters   []string  `yaml:"filters"`
+	Sink      string    `yaml:"sink"`
+	RateLimit RateLimit `yaml:"rate_limit"`
+}
+
+// Sink defines an output destination.
 type Sink struct {
-	Name   string            `yaml:"name"`
-	Type   string            `yaml:"type"` // stdout, file, http
-	Target string            `yaml:"target"`
-	Opts   map[string]string `yaml:"opts"`
+	Name string `yaml:"name"`
+	Type string `yaml:"type"`
+	Path string `yaml:"path,omitempty"`
 }
 
 // Config is the top-level logfence configuration.
@@ -30,49 +37,48 @@ type Config struct {
 	Sinks      []Sink  `yaml:"sinks"`
 }
 
-// Load reads and parses a YAML config file from the given path.
+// Load reads, parses, and validates the configuration at path.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("config: read file: %w", err)
+		return nil, fmt.Errorf("config: read %s: %w", path, err)
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("config: parse yaml: %w", err)
+		return nil, fmt.Errorf("config: parse: %w", err)
 	}
 
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("config: validation: %w", err)
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = ":8080"
+	}
+
+	sinkNames := make(map[string]struct{}, len(cfg.Sinks))
+	for _, s := range cfg.Sinks {
+		if s.Type != "stdout" && s.Type != "file" {
+			return nil, fmt.Errorf("config: unknown sink type %q", s.Type)
+		}
+		sinkNames[s.Name] = struct{}{}
+	}
+
+	for _, r := range cfg.Routes {
+		if _, ok := sinkNames[r.Sink]; !ok {
+			return nil, fmt.Errorf("config: route %q references unknown sink %q", r.Name, r.Sink)
+		}
+		if err := validateRateLimit(r.RateLimit); err != nil {
+			return nil, fmt.Errorf("config: route %q rate_limit: %w", r.Name, err)
+		}
 	}
 
 	return &cfg, nil
 }
 
-func (c *Config) validate() error {
-	if c.ListenAddr == "" {
-		c.ListenAddr = ":5170"
+func validateRateLimit(rl RateLimit) error {
+	if rl.Rate < 0 {
+		return errors.New("rate must be >= 0")
 	}
-
-	sinkNames := make(map[string]struct{}, len(c.Sinks))
-	for _, s := range c.Sinks {
-		if s.Name == "" {
-			return fmt.Errorf("sink missing name")
-		}
-		if s.Type == "" {
-			return fmt.Errorf("sink %q missing type", s.Name)
-		}
-		sinkNames[s.Name] = struct{}{}
+	if rl.Burst < 0 {
+		return errors.New("burst must be >= 0")
 	}
-
-	for _, r := range c.Routes {
-		if r.Sink == "" {
-			return fmt.Errorf("route %q missing sink", r.Name)
-		}
-		if _, ok := sinkNames[r.Sink]; !ok {
-			return fmt.Errorf("route %q references unknown sink %q", r.Name, r.Sink)
-		}
-	}
-
 	return nil
 }

@@ -5,60 +5,65 @@ import (
 
 	"github.com/yourorg/logfence/internal/config"
 	"github.com/yourorg/logfence/internal/filter"
+	"github.com/yourorg/logfence/internal/ratelimit"
 	"github.com/yourorg/logfence/internal/sink"
 )
 
-// Build constructs a Router from the application Config.
-// It wires together filter chains and sinks for every configured route.
+// Build constructs a Router from the loaded configuration.
 func Build(cfg *config.Config) (*Router, error) {
-	var routes []Route
-
-	for _, rc := range cfg.Routes {
-		// Resolve sink.
-		sinkCfg, ok := cfg.Sinks[rc.Sink]
-		if !ok {
-			return nil, fmt.Errorf("builder: route %q references unknown sink %q", rc.Name, rc.Sink)
-		}
-
-		s, err := sink.New(sinkCfg)
+	sinks := make(map[string]sink.Sink, len(cfg.Sinks))
+	for _, sc := range cfg.Sinks {
+		s, err := sink.New(sc.Type, sc.Path)
 		if err != nil {
-			return nil, fmt.Errorf("builder: route %q sink error: %w", rc.Name, err)
+			return nil, fmt.Errorf("builder: sink %q: %w", sc.Name, err)
+		}
+		sinks[sc.Name] = s
+	}
+
+	routes := make([]Route, 0, len(cfg.Routes))
+	for _, rc := range cfg.Routes {
+		chain, err := buildChain(rc.Filters)
+		if err != nil {
+			return nil, fmt.Errorf("builder: route %q: %w", rc.Name, err)
 		}
 
-		// Build filter chain.
-		var rules []filter.Rule
-		for _, rf := range rc.Filters {
-			rule, err := buildRule(rf)
-			if err != nil {
-				return nil, fmt.Errorf("builder: route %q filter error: %w", rc.Name, err)
+		s, ok := sinks[rc.Sink]
+		if !ok {
+			return nil, fmt.Errorf("builder: route %q: sink %q not found", rc.Name, rc.Sink)
+		}
+
+		var lim *ratelimit.Limiter
+		if rc.RateLimit.Rate > 0 || rc.RateLimit.Burst > 0 {
+			burst := rc.RateLimit.Burst
+			if burst == 0 {
+				burst = rc.RateLimit.Rate
 			}
-			rules = append(rules, rule)
+			lim = ratelimit.New(rc.RateLimit.Rate, burst)
 		}
 
 		routes = append(routes, Route{
-			Name:   rc.Name,
-			Filter: filter.Chain{Rules: rules},
-			Sink:   s,
+			Name:    rc.Name,
+			Chain:   chain,
+			Sink:    s,
+			Limiter: lim,
 		})
 	}
 
 	return New(routes), nil
 }
 
-func buildRule(rf config.FilterConfig) (filter.Rule, error) {
-	var rule filter.Rule
-
-	if rf.Level != "" {
-		lvl, err := filter.ParseLevel(rf.Level)
+func buildChain(specs []string) (filter.Chain, error) {
+	rules := make([]filter.Rule, 0, len(specs))
+	for _, spec := range specs {
+		r, err := buildRule(spec)
 		if err != nil {
-			return rule, err
+			return nil, err
 		}
-		rule.MinLevel = lvl
+		rules = append(rules, r)
 	}
+	return filter.Chain(rules), nil
+}
 
-	if len(rf.Fields) > 0 {
-		rule.Fields = rf.Fields
-	}
-
-	return rule, nil
+func buildRule(spec string) (filter.Rule, error) {
+	return filter.ParseRule(spec)
 }
