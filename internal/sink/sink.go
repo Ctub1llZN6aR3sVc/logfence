@@ -1,72 +1,82 @@
+// Package sink provides writers that accept a structured log entry
+// (map[string]interface{}) and forward it to a destination.
 package sink
 
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
-// Sink is the interface all output destinations must implement.
+// Sink is the common interface implemented by every destination.
 type Sink interface {
-	Write(entry map[string]any) error
+	Write(entry map[string]interface{}) error
 	Close() error
 }
 
-// Config describes a sink in the YAML configuration.
-type Config struct {
-	Type       string `yaml:"type"`
-	Path       string `yaml:"path"`
-	MaxBytes   int64  `yaml:"max_bytes"`
-	MaxBackups int    `yaml:"max_backups"`
-	WebhookURL string `yaml:"webhook_url"`
-	TimeoutSec int    `yaml:"timeout_sec"`
-}
-
-// New constructs a Sink from a Config.
-func New(cfg Config) (Sink, error) {
-	switch cfg.Type {
-	case "stdout", "":
+// New constructs a Sink from a generic configuration map.
+// Required key: "type" — one of "stdout", "file", "rotating", "webhook", "kafka".
+func New(cfg map[string]interface{}) (Sink, error) {
+	typ, _ := cfg["type"].(string)
+	switch typ {
+	case "stdout":
 		return NewStdoutSink(), nil
 	case "file":
-		return NewFileSink(cfg.Path)
-	case "rotating_file":
-		return NewRotatingFileSink(RotatingConfig{
-			Path:       cfg.Path,
-			MaxBytes:   cfg.MaxBytes,
-			MaxBackups: cfg.MaxBackups,
-		})
+		path, _ := cfg["path"].(string)
+		if path == "" {
+			return nil, fmt.Errorf("sink file: missing path")
+		}
+		return NewFileSink(path)
+	case "rotating":
+		path, _ := cfg["path"].(string)
+		if path == "" {
+			return nil, fmt.Errorf("sink rotating: missing path")
+		}
+		maxBytes, _ := cfg["max_bytes"].(int)
+		maxFiles, _ := cfg["max_files"].(int)
+		return NewRotatingFileSink(path, int64(maxBytes), maxFiles)
 	case "webhook":
-		return NewWebhookSink(WebhookConfig{
-			URL:            cfg.WebhookURL,
-			TimeoutSeconds: cfg.TimeoutSec,
-		})
+		url, _ := cfg["url"].(string)
+		timeoutS, _ := cfg["timeout_s"].(int)
+		if timeoutS <= 0 {
+			timeoutS = 5
+		}
+		return NewWebhookSink(url, time.Duration(timeoutS)*time.Second)
+	case "kafka":
+		baseURL, _ := cfg["base_url"].(string)
+		topic, _ := cfg["topic"].(string)
+		timeoutS, _ := cfg["timeout_s"].(int)
+		if timeoutS <= 0 {
+			timeoutS = 5
+		}
+		return NewKafkaRestSink(baseURL, topic, time.Duration(timeoutS)*time.Second)
 	default:
-		return nil, fmt.Errorf("unknown sink type: %q", cfg.Type)
+		return nil, fmt.Errorf("sink: unknown type %q", typ)
 	}
 }
 
-// StdoutSink writes JSON entries to stdout.
-type StdoutSink struct{}
+// stdoutSink writes JSON lines to standard output.
+type stdoutSink struct{}
 
-func NewStdoutSink() *StdoutSink { return &StdoutSink{} }
+func NewStdoutSink() Sink { return &stdoutSink{} }
 
-func (s *StdoutSink) Write(entry map[string]any) error {
+func (s *stdoutSink) Write(entry map[string]interface{}) error {
 	return writeJSON(os.Stdout, entry)
 }
+func (s *stdoutSink) Close() error { return nil }
 
-func (s *StdoutSink) Close() error { return nil }
+// fileSink appends JSON lines to a file.
+type fileSink struct{ f *os.File }
 
-// FileSink writes JSON entries to a file.
-type FileSink struct {
-	f *os.File
-}
-
-func NewFileSink(path string) (*FileSink, error) {
+func NewFileSink(path string) (Sink, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("open file sink %q: %w", path, err)
+		return nil, err
 	}
-	return &FileSink{f: f}, nil
+	return &fileSink{f: f}, nil
 }
 
-func (s *FileSink) Write(entry map[string]any) error { return writeJSON(s.f, entry) }
-func (s *FileSink) Close() error                    { return s.f.Close() }
+func (s *fileSink) Write(entry map[string]interface{}) error {
+	return writeJSON(s.f, entry)
+}
+func (s *fileSink) Close() error { return s.f.Close() }
