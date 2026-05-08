@@ -81,3 +81,20 @@ func TestMultilineAssembler_FlushEmpty(t *testing.T) {
 		t.Errorf("expected empty flush on empty buffer, got ok=%v entry=%q", ok, entry)
 	}
 }
+
+func TestMultilineAssembler_NoStartPattern(t *testing.T) {
+	// When no StartPattern is configured, every line should be flushed immediately
+	// as a standalone entry without buffering.
+	a := NewMultilineAssembler(MultilineConfig{})
+
+	for _, line := range []string{"line one", "line two", "line three"} {
+		entry, ok := a.Feed(line)
+		if !ok {
+			t.Errorf("expected immediate flush for line %q when no StartPattern set", line)
+			continue
+		}
+		if entry != line {
+			t.Errorf("expected flushed entry %q, got %q", line, entry)
+		}
+	}
+}
