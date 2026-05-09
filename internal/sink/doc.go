@@ -1,19 +1,19 @@
-// Package sink provides output destination implementations for logfence.
+// Package sink provides output destinations for log entries processed by
+// logfence. Each sink implements a common Write/Close interface so the router
+// can dispatch entries without knowing the underlying transport.
 //
-// Available sink types:
+// Available sinks:
 //
-//	"stdout"         – writes JSON log entries to standard output (default).
-//	"file"           – appends JSON log entries to a file at a fixed path.
-//	"rotating_file"  – like "file" but rotates when the file exceeds MaxBytes.
-//	"webhook"        – POSTs each entry as a JSON body to an HTTP endpoint.
+//   - StdoutSink  – writes JSON lines to standard output.
+//   - FileSink    – appends JSON lines to a plain file.
+//   - RotatingFileSink – like FileSink but rotates when the file exceeds a
+//     configurable byte threshold, keeping a bounded number of backups.
+//   - WebhookSink – POSTs JSON payloads to an HTTP endpoint.
+//   - KafkaRestSink – publishes entries to a Kafka topic via the Confluent
+//     REST Proxy HTTP API.
+//   - SyslogSink  – forwards entries to a syslog daemon over UDP or TCP,
+//     mapping the entry "level" field to the appropriate syslog priority.
 //
-// All sinks satisfy the Sink interface:
-//
-//	type Sink interface {
-//	    Write(entry map[string]any) error
-//	    Close() error
-//	}
-//
-// Use New(Config) to construct the appropriate Sink from a Config struct
-// that is typically populated from the YAML configuration file.
+// New sinks are registered in New() (sink.go) so that the router builder can
+// instantiate them from configuration by name.
 package sink
