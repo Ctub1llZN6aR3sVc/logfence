@@ -1,23 +1,18 @@
-// Package sink provides output destinations for structured log entries.
+// Package sink provides Sink implementations that write structured log entries
+// (represented as map[string]any) to various backends.
 //
-// Each sink implements the Sink interface:
+// Available sinks:
 //
-//	type Sink interface {
-//		Write(entry map[string]any) error
-//		Close() error
-//	}
+//   - stdout      – writes JSON lines to os.Stdout
+//   - file        – appends JSON lines to a file
+//   - rotating    – appends JSON lines with automatic size-based rotation
+//   - webhook     – HTTP POST JSON to an arbitrary URL
+//   - kafka       – publishes via Kafka REST Proxy
+//   - syslog      – forwards over UDP/TCP syslog
+//   - redis       – RPUSH to a Redis list
+//   - elasticsearch – indexes into Elasticsearch
+//   - loki        – pushes to Grafana Loki
+//   - splunk      – sends to a Splunk HTTP Event Collector (HEC)
 //
-// Available sink types
-//
-//   - stdout   – writes JSON lines to standard output
-//   - file     – appends JSON lines to a file
-//   - rotating – like file but rotates when a maximum byte size is reached
-//   - webhook  – HTTP POST JSON payload to a remote endpoint
-//   - kafka    – publishes via Kafka REST Proxy
-//   - syslog   – forwards entries to a syslog daemon over UDP or TCP
-//   - redis    – pushes JSON entries onto a Redis list using RPUSH
-//
-// The New factory function selects the appropriate implementation from a
-// sink-type string and a string→string configuration map, making it easy
-// to wire sinks directly from the parsed YAML configuration.
+// Use New(kind, opts) to construct any sink by name from a config map.
 package sink
